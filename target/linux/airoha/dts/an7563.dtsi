@@ -21,6 +21,33 @@
 	#address-cells = <1>;
 	#size-cells = <1>;
 
+	/*
+	 * TODO: offsets/sizes below follow the AN7581 pattern and are NOT
+	 * yet confirmed against a live BE5000 (no /proc/iomem dump for
+	 * this region available at time of writing). Verify before
+	 * upstreaming.
+	 */
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		npu_binary: npu-binary@84000000 {
+			no-map;
+			reg = <0x84000000 0xa00000>;
+		};
+
+		qdma0_buf: qdma0-buf@87000000 {
+			no-map;
+			reg = <0x87000000 0x2000000>;
+		};
+
+		qdma1_buf: qdma1-buf@89000000 {
+			no-map;
+			reg = <0x89000000 0x1000000>;
+		};
+	};
+
 	psci {
 		compatible = "arm,psci-0.2";
 		method = "smc";
@@ -294,6 +321,163 @@
 				interrupt-controller;
 				#address-cells = <0>;
 				#interrupt-cells = <1>;
+			};
+		};
+
+		/*
+		 * reg/interrupts confirmed against the stock BE5000
+		 * npu@1e800000 dtb dump (econet,ecnt-npu).
+		 */
+		npu: npu@1e800000 {
+			compatible = "airoha,an7563-npu", "airoha,en7581-npu";
+			reg = <0x1e800000 0x60000>, <0x1e900000 0x313000>;
+			interrupts = <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 120 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 121 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 122 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 123 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 125 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 134 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 135 IRQ_TYPE_LEVEL_HIGH>;
+			memory-region = <&npu_binary>;
+			memory-region-names = "binary";
+
+			status = "disabled";
+		};
+
+		/*
+		 * fe/qdma reg confirmed against stock BE5000 dtb
+		 * (frame_engine@1fb50000: 0x1fb50000/0x2600,
+		 * 0x1fb54000/0x4000 combined qdma0+qdma1, matches the
+		 * 0x1fb54000/0x2000 + 0x1fb56000/0x2000 split used here).
+		 * interrupts list order/values also confirmed 1:1 against
+		 * the stock dtb's frame_engine@1fb50000 interrupts property
+		 * (37,55,56,57,38,58,59,60,49,64 decimal).
+		 * resets trimmed to the 6 lines present in the U-Boot
+		 * 310-...-AN7563-SoC.patch eth node (no xsi-mac/xfp-mac,
+		 * AN7563 has no PON/10G uplink unlike AN7581).
+		 */
+		eth: ethernet@1fb50000 {
+			compatible = "airoha,an7563-eth", "airoha,en7581-eth";
+			reg = <0x1fb50000 0x2600>,
+			      <0x1fb54000 0x2000>,
+			      <0x1fb56000 0x2000>;
+			reg-names = "fe", "qdma0", "qdma1";
+
+			resets = <&scu EN7581_FE_RST>,
+				 <&scu EN7581_FE_PDMA_RST>,
+				 <&scu EN7581_FE_QDMA_RST>,
+				 <&scu EN7581_DUAL_HSI0_MAC_RST>,
+				 <&scu EN7581_DUAL_HSI1_MAC_RST>,
+				 <&scu EN7581_HSI_MAC_RST>;
+			reset-names = "fe", "pdma", "qdma",
+				      "hsi0-mac", "hsi1-mac", "hsi-mac";
+
+			interrupts = <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 55 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 56 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 58 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 59 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 60 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 49 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 64 IRQ_TYPE_LEVEL_HIGH>;
+
+			memory-region = <&qdma0_buf>, <&qdma1_buf>;
+			memory-region-names = "qdma0-buf", "qdma1-buf";
+
+			airoha,npu = <&npu>;
+
+			status = "disabled";
+
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/*
+			 * TODO: gdm reg (MAC index) not yet confirmed on
+			 * real hardware. AN7581 exposes gdm1/gdm2/gdm4;
+			 * AN7563 has no PON/10G uplink so only one external
+			 * MAC is expected here. Verify against dmesg on a
+			 * live boot before relying on "gdm1".
+			 */
+			gdm1: ethernet@1 {
+				compatible = "airoha,eth-mac";
+				reg = <1>;
+				status = "disabled";
+			};
+		};
+
+		/*
+		 * switch reg confirmed against stock BE5000 dtb
+		 * (frame_engine@1fb50000 third reg entry: 0x1fb58000/0x8000).
+		 * ports/mdio structure adapted from an7581.dtsi, trimmed to
+		 * 3 internal PHYs (BE5000 has 3x built-in 1G LAN, no 4th
+		 * internal port). gsw_phy1/2/3 MDIO addresses 9/10/11
+		 * confirmed against a live BE5000's own dmesg
+		 * (ephy_addr = 9/10/11 for port_num 0/1/2).
+		 */
+		switch: switch@1fb58000 {
+			compatible = "airoha,an7563-switch", "airoha,en7581-switch";
+			reg = <0x1fb58000 0x8000>;
+			resets = <&scu EN7581_GSW_RST>;
+
+			status = "disabled";
+
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				gsw_port1: port@1 {
+					reg = <1>;
+					phy-mode = "internal";
+					phy-handle = <&gsw_phy1>;
+					status = "disabled";
+				};
+
+				gsw_port2: port@2 {
+					reg = <2>;
+					phy-mode = "internal";
+					phy-handle = <&gsw_phy2>;
+					status = "disabled";
+				};
+
+				gsw_port3: port@3 {
+					reg = <3>;
+					phy-mode = "internal";
+					phy-handle = <&gsw_phy3>;
+					status = "disabled";
+				};
+			};
+
+			mdio: mdio {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				gsw_phy1: ethernet-phy@9 {
+					compatible = "ethernet-phy-ieee802.3-c22";
+					reg = <9>;
+					phy-mode = "internal";
+					status = "disabled";
+				};
+
+				gsw_phy2: ethernet-phy@a {
+					compatible = "ethernet-phy-ieee802.3-c22";
+					reg = <10>;
+					phy-mode = "internal";
+					status = "disabled";
+				};
+
+				gsw_phy3: ethernet-phy@b {
+					compatible = "ethernet-phy-ieee802.3-c22";
+					reg = <11>;
+					phy-mode = "internal";
+					status = "disabled";
+				};
 			};
 		};
 	};
