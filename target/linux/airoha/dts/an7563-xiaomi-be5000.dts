@@ -26,7 +26,41 @@
 		device_type = "memory";
 		reg = <0x80000000 0x20000000>;
 	};
+
+	/*
+	 * Confirmed against a live BE5000: /sys/kernel/debug/gpio shows
+	 * gpio-5 "reset" and gpio-12 "mesh" held on gpiochip0 (0-31),
+	 * matching the vendor gpio-keys-polled node in the stock dtb.
+	 */
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		button-reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&an7563_pinctrl 5 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+
+		button-mesh {
+			label = "mesh";
+			linux,code = <KEY_WPS_BUTTON>;
+			gpios = <&an7563_pinctrl 12 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+	};
 };
+
+/*
+ * TODO: not yet added to an7563.dtsi (no pwm controller node exists
+ * there yet). Stock dtb confirms:
+ *   pwm@1fbf0234 { compatible = "airoha,airoha-pwm";
+ *                   reg = <0x1fbf0234 0x20>, <0x1fbf0268 0x4>, <0x1fbf0298 0x24>; }
+ *   channel 1 = orange, channel 4 = blue (pwm-rgb consumer node)
+ * Needs an "airoha,en7581-pwm"-compatible node added to an7563.dtsi
+ * first (mirroring en7581_pwm in an7581.dtsi) before this can be
+ * wired up here. Left out of this diff on purpose - separate commit.
+ */
 
 &pcie0 {
 	status = "okay";
@@ -54,19 +88,41 @@
 
 		partition@0 {
 			label = "u-boot";
-			reg = <0x0 0x7c000>;
+			reg = <0x0 0x60000>;
 			read-only;
 		};
 
 		partition@1 {
 			label = "u-boot-env";
-			reg = <0x7c000 0x4000>;
+			reg = <0x60000 0x20000>;
 		};
 
+		/*
+		 * MAC offsets confirmed against a real Factory partition
+		 * dump: chip-id 0x7992 (LE) at offset 0, two MAC addresses
+		 * at 0x004/0x00a (mt76/mt7996-format eeprom, MT_EE_MAC_ADDR
+		 * / MT_EE_MAC_ADDR2). Which MAC belongs to which radio
+		 * band (2.4 vs 5 GHz) is not yet confirmed on real hardware
+		 * - verify against `iw phy` once wifi@ nodes exist.
+		 */
 		partition@2 {
 			label = "art";
 			reg = <0x80000 0x40000>;
 			read-only;
+
+			nvmem-layout {
+				compatible = "fixed-layout";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				macaddr_wifi0: macaddr@4 {
+					reg = <0x4 0x6>;
+				};
+
+				macaddr_wifi1: macaddr@a {
+					reg = <0xa 0x6>;
+				};
+			};
 		};
 
 		partition@3 {
@@ -75,4 +131,81 @@
 			reg = <0xc0000 0x4000000>;
 		};
 	};
+};
+
+&eth {
+	status = "okay";
+};
+
+&switch {
+	status = "okay";
+};
+
+&gsw_port1 {
+	status = "okay";
+	label = "lan1";
+};
+
+&gsw_phy1 {
+	status = "okay";
+};
+
+&gsw_port2 {
+	status = "okay";
+	label = "lan2";
+};
+
+&gsw_phy2 {
+	status = "okay";
+};
+
+&gsw_port3 {
+	status = "okay";
+	label = "lan3";
+};
+
+&gsw_phy3 {
+	status = "okay";
+};
+
+/*
+ * EN8811H 2.5G PHY. MDIO address 0xf and reset-gpio 13/active-low
+ * confirmed against a live BE5000: dmesg shows
+ * "Airoha EN8811H mdio-bus--1:0f: PHY = 3a2 - a411", and
+ * /etc/preinit's TCSUPPORT_CPU_AN7552 branch does:
+ *   echo 13 > .../export; direction=out; value=0; sleep 1; value=1
+ * i.e. active-low reset held for 1 full second before release.
+ */
+&mdio {
+	en8811: ethernet-phy@f {
+		compatible = "ethernet-phy-ieee802.3-c45";
+		reg = <0xf>;
+
+		reset-gpios = <&an7563_pinctrl 13 GPIO_ACTIVE_LOW>;
+		reset-assert-us = <1000000>;
+		reset-deassert-us = <20000>;
+	};
+};
+
+/*
+ * TODO: MAC address for gdm1 currently borrows the WiFi band0 nvmem
+ * cell as a placeholder so the interface has *a* valid address for
+ * first-boot testing. This is very likely wrong long-term - the
+ * live unit's own printenv shows dedicated ethaddr/ethaddr_wan/
+ * ethaddr_wan2 variables in u-boot-env, which is almost certainly
+ * the real source. Needs a u-boot-env nvmem-layout on the
+ * u-boot-env partition instead (compatible = "u-boot,env", NOT
+ * "u-boot,env-layout" - see the known bug in an7581-nokia_valyrian
+ * and mt7988a-arcadyan-mozart which silently never binds).
+ * Also TODO: confirm "gdm1" is really the right MAC index for the
+ * EN8811H port on this SoC - not yet verified via dmesg.
+ */
+&gdm1 {
+	status = "okay";
+
+	phy-handle = <&en8811>;
+	phy-mode = "2500base-x";
+
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&macaddr_wifi0>;
 };
