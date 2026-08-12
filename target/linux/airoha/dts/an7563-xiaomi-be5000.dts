@@ -137,6 +137,22 @@
 	status = "okay";
 };
 
+/*
+ * eth references this node via "airoha,npu = <&npu>;" in an7563.dtsi.
+ * Leaving npu disabled while eth points at it caused a boot hang
+ * right after eth's probe() printed "generated random MAC address"
+ * (confirmed via TFTP-boot serial log on real hardware) - the driver
+ * likely waits on an NPU-ready register/mailbox that never gets
+ * initialized when the NPU device itself was never probed.
+ * Requires the airoha-en7581-mt7996-npu-firmware package (added to
+ * an7563.mk) to actually load; without the firmware files present
+ * this may fail differently (request_firmware() error) - to be
+ * confirmed on next boot test.
+ */
+&npu {
+	status = "okay";
+};
+
 &switch {
 	status = "okay";
 };
