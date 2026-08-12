@@ -134,20 +134,13 @@
 };
 
 &eth {
-	status = "okay";
+	status = "disabled";
 };
 
 /*
- * eth references this node via "airoha,npu = <&npu>;" in an7563.dtsi.
- * Leaving npu disabled while eth points at it caused a boot hang
- * right after eth's probe() printed "generated random MAC address"
- * (confirmed via TFTP-boot serial log on real hardware) - the driver
- * likely waits on an NPU-ready register/mailbox that never gets
- * initialized when the NPU device itself was never probed.
- * Requires the airoha-en7581-mt7996-npu-firmware package (added to
- * an7563.mk) to actually load; without the firmware files present
- * this may fail differently (request_firmware() error) - to be
- * confirmed on next boot test.
+ * Keeping npu disabled for now - the real fix this round is the
+ * switch conduit port (see an7563.dtsi), which was the actual
+ * missing piece. Re-enable npu as a separate, isolated test later.
  */
 &npu {
 	status = "disabled";
@@ -204,26 +197,39 @@
 };
 
 /*
- * TODO: MAC address for gdm1 currently borrows the WiFi band0 nvmem
- * cell as a placeholder so the interface has *a* valid address for
- * first-boot testing. This is very likely wrong long-term - the
- * live unit's own printenv shows dedicated ethaddr/ethaddr_wan/
- * ethaddr_wan2 variables in u-boot-env, which is almost certainly
- * the real source. Needs a u-boot-env nvmem-layout on the
- * u-boot-env partition instead (compatible = "u-boot,env", NOT
- * "u-boot,env-layout" - see the known bug in an7581-nokia_valyrian
- * and mt7988a-arcadyan-mozart which silently never binds).
- * Also TODO: confirm "gdm1" is really the right MAC index for the
- * EN8811H port on this SoC - not yet verified via dmesg.
+ * gdm1 is now the switch's conduit port (see port@6 inside
+ * switch/ports in an7563.dtsi, "ethernet = <&gdm1>") - this is what
+ * makes gsw_port1/2/3 (lan1/2/3) actually reachable from the network
+ * stack. It carries no external PHY of its own, just needs enabling.
  */
 &gdm1 {
+	status = "okay";
+};
+
+/*
+ * EN8811H WAN now lives on gdm2 instead of gdm1, since gdm1 is the
+ * switch's conduit port (see above) and can't simultaneously be a
+ * standalone MAC for an external PHY.
+ *
+ * MAC address: nvmem-cells intentionally NOT set here for now.
+ * Wiring gdm1's nvmem-cells to macaddr_wifi0 (an "art" partition
+ * cell) previously caused a confirmed kernel panic during probe
+ * (bus_find_device/klist_next crash inside of_get_mac_address_nvmem,
+ * seen via full serial log + call trace on real hardware) - looked
+ * like a race between the MTD/nvmem provider registering and eth's
+ * probe running. Needs investigation into probe ordering /
+ * EPROBE_DEFER handling before re-adding a real MAC source; for now
+ * the driver falls back to a random MAC on boot.
+ *
+ * TODO: confirm gdm2 (reg=2) is really the correct MAC index for
+ * EN8811H on this SoC - chosen by analogy with an7581.dtsi's gdm
+ * numbering scheme, not yet verified via dmesg.
+ */
+&gdm2 {
 	status = "okay";
 
 	openwrt,netdev-name = "wan";
 
 	phy-handle = <&en8811>;
 	phy-mode = "2500base-x";
-
-	nvmem-cell-names = "mac-address";
-	nvmem-cells = <&macaddr_wifi0>;
 };

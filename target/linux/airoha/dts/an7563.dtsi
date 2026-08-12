@@ -339,9 +339,49 @@
 		 * reg/interrupts confirmed against the stock BE5000
 		 * npu@1e800000 dtb dump (econet,ecnt-npu).
 		 */
-		npu: npu@1e800000 {
+		/*
+		 * reg CONFIRMED WRONG in the previous round and fixed here
+		 * by reading the actual airoha_npu.c driver source
+		 * (drivers/net/ethernet/airoha/airoha_npu.c upstream):
+		 * airoha_npu_probe() does
+		 *   base = devm_platform_ioremap_resource(pdev, 0);
+		 * i.e. maps reg[0] as the real NPU register block, then
+		 * writes to offsets up to ~0x310184 (NPU_TIMER_BASE_ADDR
+		 * area) through it. The old reg[0]=<0x1e800000 0x60000>
+		 * (taken from the vendor stock dtb, which uses a different,
+		 * vendor-specific driver) is both the wrong base address
+		 * AND far too small (0x60000) for those offsets - a
+		 * confirmed out-of-bounds ioremap access, likely the real
+		 * cause of the "strcmp/__of_device_is_compatible" crashes
+		 * seen across earlier test rounds (memory corruption from
+		 * writes past the mapped region, manifesting elsewhere).
+		 * Single region now, matching upstream an7581.dtsi exactly.
+		 *
+		 * NOTE: "airoha,an7563-npu" is NOT in the driver's
+		 * of_device_id table (only en7581-npu/an7583-npu are) - it
+		 * matches via the en7581-npu fallback compatible, which
+		 * also means it uses en7581's firmware filenames by
+		 * default (en7581_npu_rv32.bin/en7581_npu_data.bin), NOT
+		 * the MT7996-variant files. an7563.mk currently references
+		 * airoha-en7581-mt7996-npu-firmware (MT7996-variant
+		 * filenames) - this mismatch needs resolving (either switch
+		 * the package to the plain en7581 variant, or add an
+		 * explicit "firmware-name" property here to request the
+		 * MT7996 filenames) before NPU firmware will actually load.
+		 *
+		 * ALSO NOTE: interrupts count (9) is fewer than an7581.dtsi's
+		 * 15 (1 mbox + 4 core-wdt + 10 wlan queues) - the driver's
+		 * probe loop indexes a fixed number of core/wlan irqs
+		 * (NPU_NUM_CORES / ARRAY_SIZE(npu->irqs), shared constants
+		 * across the whole driver, not SoC-specific). If AN7563
+		 * really has fewer, platform_get_irq() will fail cleanly
+		 * with -ENXIO once the reg fix above is in place - watch
+		 * for that in the next boot log rather than another silent
+		 * crash.
+		 */
+		npu: npu@1e900000 {
 			compatible = "airoha,an7563-npu", "airoha,en7581-npu";
-			reg = <0x1e800000 0x60000>, <0x1e900000 0x313000>;
+			reg = <0x1e900000 0x313000>;
 			interrupts = <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 120 IRQ_TYPE_LEVEL_HIGH>,
@@ -369,6 +409,27 @@
 		 * 310-...-AN7563-SoC.patch eth node (no xsi-mac/xfp-mac,
 		 * AN7563 has no PON/10G uplink unlike AN7581).
 		 */
+		/*
+		 * IMPORTANT: reverted back to "airoha,en7581-eth" -
+		 * "airoha,en7523-eth" (from xinyooo's an7563.dtsi) turned
+		 * out to have NO matching driver in this kernel build at
+		 * all: device status was "okay" but nothing in dmesg ever
+		 * mentioned airoha_eth/switch, and no driver was bound
+		 * (confirmed on real hardware). en7523 is a separate 32-bit
+		 * ARM subtarget in mainline OpenWrt with its own legacy
+		 * driver stack; our AN7563 build uses the same 64-bit
+		 * "airoha" target/kernel tree as AN7581, whose
+		 * drivers/net/ethernet/airoha/airoha_eth.c only knows
+		 * "airoha,en7581-eth" (confirmed working - this is what
+		 * hung on the NPU mbox handshake in earlier rounds).
+		 *
+		 * This round tests an UNTESTED variable: en7581-eth kept,
+		 * but the "airoha,npu = <&npu>;" phandle removed entirely.
+		 * If airoha_ppe_init()/NPU handshake in the driver is only
+		 * triggered when that phandle resolves to a valid device
+		 * (rather than unconditionally), this should let eth probe
+		 * complete without ever touching NPU/mbox.
+		 */
 		eth: ethernet@1fb50000 {
 			compatible = "airoha,an7563-eth", "airoha,en7581-eth";
 			reg = <0x1fb50000 0x2600>,
@@ -376,17 +437,6 @@
 			      <0x1fb56000 0x2000>;
 			reg-names = "fe", "qdma0", "qdma1";
 
-			/*
-			 * The kernel airoha_eth driver requests all 8
-			 * named resets as a single bulk regardless of
-			 * whether XSI/PON hardware is physically present;
-			 * omitting xsi-mac/xfp-mac makes the whole bulk
-			 * request fail with -ENOENT and the driver never
-			 * probes (confirmed on real hardware: "failed to
-			 * get bulk xsi reset lines", probe error -2).
-			 * AN7563 has no PON/10G uplink, but toggling the
-			 * unused reset bits in SCU is harmless.
-			 */
 			resets = <&scu EN7581_FE_RST>,
 				 <&scu EN7581_FE_PDMA_RST>,
 				 <&scu EN7581_FE_QDMA_RST>,
@@ -413,7 +463,7 @@
 			memory-region = <&qdma0_buf>, <&qdma1_buf>;
 			memory-region-names = "qdma0-buf", "qdma1-buf";
 
-			airoha,npu = <&npu>;
+			/* airoha,npu intentionally NOT set - see comment above */
 
 			status = "disabled";
 
@@ -421,15 +471,28 @@
 			#size-cells = <0>;
 
 			/*
-			 * TODO: gdm reg (MAC index) not yet confirmed on
-			 * real hardware. AN7581 exposes gdm1/gdm2/gdm4;
-			 * AN7563 has no PON/10G uplink so only one external
-			 * MAC is expected here. Verify against dmesg on a
-			 * live boot before relying on "gdm1".
+			 * gdm1 is used as the switch's conduit port (see
+			 * port@6 inside switch/ports below, which links via
+			 * "ethernet = <&gdm1>"). gdm2 is enabled at board
+			 * level for the EN8811H 2.5G WAN PHY. gdm4 stays
+			 * unused/disabled.
 			 */
 			gdm1: ethernet@1 {
 				compatible = "airoha,eth-mac";
 				reg = <1>;
+				phy-mode = "internal";
+				status = "disabled";
+			};
+
+			gdm2: ethernet@2 {
+				compatible = "airoha,eth-mac";
+				reg = <2>;
+				status = "disabled";
+			};
+
+			gdm4: ethernet@4 {
+				compatible = "airoha,eth-mac";
+				reg = <4>;
 				status = "disabled";
 			};
 		};
@@ -444,9 +507,23 @@
 		 * (ephy_addr = 9/10/11 for port_num 0/1/2).
 		 */
 		switch: switch@1fb58000 {
-			compatible = "airoha,an7563-switch", "airoha,en7581-switch";
+			compatible = "airoha,an7563-switch",
+				     "airoha,en7523-switch",
+				     "airoha,en7581-switch";
 			reg = <0x1fb58000 0x8000>;
 			resets = <&scu EN7581_GSW_RST>;
+
+			/*
+			 * Confirmed against upstream an7581.dtsi - the
+			 * switch registers itself as an interrupt-controller
+			 * for per-port link IRQs. Missing this was likely
+			 * part of why enabling switch alone never actually
+			 * produced usable interfaces.
+			 */
+			interrupt-controller;
+			#interrupt-cells = <1>;
+			interrupt-parent = <&gic>;
+			interrupts = <GIC_SPI 31 IRQ_TYPE_LEVEL_HIGH>;
 
 			status = "disabled";
 
@@ -476,6 +553,25 @@
 					phy-mode = "internal";
 					phy-handle = <&gsw_phy3>;
 					status = "disabled";
+				};
+
+				/*
+				 * CPU/conduit port linking the switch fabric
+				 * to gdm1. Without this, gsw_port1/2/3 have
+				 * no path out to the network stack at all -
+				 * confirmed missing from our earlier attempts
+				 * by comparing against upstream an7581.dtsi.
+				 */
+				port@6 {
+					reg = <6>;
+					ethernet = <&gdm1>;
+					phy-mode = "internal";
+
+					fixed-link {
+						speed = <10000>;
+						full-duplex;
+						pause;
+					};
 				};
 			};
 

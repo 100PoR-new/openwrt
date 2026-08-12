@@ -38,16 +38,19 @@ define Device/xiaomi_be5000
   # kmod-phy-airoha-en8811h: driver for the onboard EN8811H 2.5G PHY
   #   (mdio addr 0xf) - without it, the en8811 ethernet-phy@f node in
   #   the dts has no matching driver and the PHY never binds.
-  # airoha-en7581-mt7996-npu-firmware: firmware blobs for the NPU
-  #   node the eth driver references via "airoha,npu = <&npu>" -
-  #   without it, request_firmware() for the NPU can't complete.
-  #   NOTE: picked the mt7996 firmware variant by analogy with
-  #   AN7581 boards; not yet confirmed this is the right NPU
-  #   firmware variant for the AN7563+MT7991 pairing specifically -
-  #   revisit once WiFi bring-up is underway.
+  # airoha-en7581-npu-firmware: firmware blobs for the NPU node the
+  #   eth driver references via "airoha,npu = <&npu>". CONFIRMED by
+  #   reading the actual airoha_npu.c driver source: "airoha,an7563-npu"
+  #   is not in the driver's of_device_id table at all, so it matches
+  #   via the "airoha,en7581-npu" fallback compatible - which means it
+  #   uses the PLAIN en7581 firmware filenames by default
+  #   (en7581_npu_rv32.bin/en7581_npu_data.bin), not the MT7996-variant
+  #   ones, unless a "firmware-name" property is explicitly set in the
+  #   npu dts node to request them. Previously had this set to the
+  #   mt7996-variant package by mistake.
   DEVICE_PACKAGES += kmod-i2c-an7581 \
 		      kmod-phy-airoha-en8811h \
-		      airoha-en7581-mt7996-npu-firmware
+		      airoha-en7581-npu-firmware
   KERNEL_LOADADDR := 0x80088000
   ARTIFACT/preloader.bin := an7563-preloader xiaomi_be5000
   ARTIFACT/bl2-bl31-uboot.bin := an7563-bl2-bl31-uboot xiaomi_be5000
