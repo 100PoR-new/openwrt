@@ -18,7 +18,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,115200 earlycon";
+		bootargs = "console=ttyS0,115200 earlycon initcall_debug ignore_loglevel";
 		stdout-path = "serial0:115200n8";
 	};
 
@@ -150,7 +150,7 @@
  * confirmed on next boot test.
  */
 &npu {
-	status = "okay";
+	status = "disabled";
 };
 
 &switch {
@@ -218,6 +218,8 @@
  */
 &gdm1 {
 	status = "okay";
+
+	openwrt,netdev-name = "wan";
 
 	phy-handle = <&en8811>;
 	phy-mode = "2500base-x";
